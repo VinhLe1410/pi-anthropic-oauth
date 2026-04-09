@@ -1,0 +1,52 @@
+{
+  "name": "pi-anthropic-oauth",
+  "version": "0.1.0",
+  "description": "Claude Pro/Max OAuth extension for Pi",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "anthropic",
+    "claude",
+    "oauth",
+    "extension"
+  ],
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/leohenon/pi-anthropic-oauth"
+  },
+  "bugs": {
+    "url": "https://github.com/leohenon/pi-anthropic-oauth/issues"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "pack:check": "npm pack --dry-run",
+    "prepublishOnly": "npm run check && npm run pack:check"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-ai": "^0.66.1",
+    "@mariozechner/pi-coding-agent": "^0.66.1",
+    "typescript": "^5.9.3"
+  }
+}
