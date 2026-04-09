@@ -4,14 +4,6 @@
   "description": "Claude Pro/Max OAuth extension for Pi",
   "type": "module",
   "license": "MIT",
-  "keywords": [
-    "pi-package",
-    "pi",
-    "anthropic",
-    "claude",
-    "oauth",
-    "extension"
-  ],
   "files": [
     "src",
     "README.md",

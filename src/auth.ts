@@ -16,8 +16,10 @@ const SCOPES = [
   "user:mcp_servers",
   "user:file_upload",
 ].join(" ");
-const USER_AGENT = "claude-code/2.1.96";
+const USER_AGENT = "claude-code/2.1.97";
 const LOCAL_CALLBACK_TIMEOUT = 5 * 60 * 1000;
+const MAX_TOKEN_RETRIES = 2;
+const INITIAL_RETRY_DELAY_MS = 5000;
 
 export { USER_AGENT };
 
@@ -71,25 +73,23 @@ export async function loginAnthropic(
   if (!parsed) throw new Error("Could not parse authorization callback input.");
   if (parsed.state !== state) throw new Error("OAuth state mismatch.");
 
-  const tokenResponse = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: makeTokenHeaders(),
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      client_id: CLIENT_ID,
-      code: parsed.code,
-      state: parsed.state,
-      redirect_uri: redirectUri,
-      code_verifier: verifier,
-    }).toString(),
-    signal: callbacks.signal,
-  });
-
-  if (!tokenResponse.ok) {
-    throw new Error(
-      `Token exchange failed: ${tokenResponse.status} ${await tokenResponse.text()}`,
-    );
-  }
+  const tokenResponse = await fetchWithRetry(
+    TOKEN_URL,
+    {
+      method: "POST",
+      headers: makeTokenHeaders(),
+      body: JSON.stringify({
+        grant_type: "authorization_code",
+        client_id: CLIENT_ID,
+        code: parsed.code,
+        state: parsed.state,
+        redirect_uri: redirectUri,
+        code_verifier: verifier,
+      }),
+      signal: callbacks.signal,
+    },
+    "Token exchange",
+  );
 
   const data = (await tokenResponse.json()) as {
     access_token: string;
@@ -107,20 +107,27 @@ export async function loginAnthropic(
 export async function refreshAnthropicToken(
   credentials: OAuthCredentials,
 ): Promise<OAuthCredentials> {
-  const response = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: makeTokenHeaders(),
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: CLIENT_ID,
-      refresh_token: credentials.refresh,
-    }).toString(),
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Token refresh failed: ${response.status} ${await response.text()}`,
+  let response: Response;
+  try {
+    response = await fetchWithRetry(
+      TOKEN_URL,
+      {
+        method: "POST",
+        headers: makeTokenHeaders(),
+        body: JSON.stringify({
+          grant_type: "refresh_token",
+          client_id: CLIENT_ID,
+          refresh_token: credentials.refresh,
+          scope: SCOPES,
+        }),
+      },
+      "Token refresh",
     );
+  } catch {
+    if (credentials.expires > Date.now()) {
+      return { ...credentials, expires: Date.now() + 30_000 };
+    }
+    throw new Error("Token refresh failed and token has expired.");
   }
 
   const data = (await response.json()) as {
@@ -155,11 +162,50 @@ function makeAuthorizeUrl(
   return `${AUTHORIZE_URL}?${authParams.toString()}`;
 }
 
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  label: string,
+): Promise<Response> {
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= MAX_TOKEN_RETRIES; attempt++) {
+    const response = await fetch(url, init);
+
+    if (response.ok) return response;
+
+    const bodyText = await response.text();
+
+    const shouldRetry = response.headers.get("x-should-retry");
+    if (shouldRetry === "false") {
+      throw new Error(`${label} failed: ${response.status} ${bodyText}`);
+    }
+
+    if (
+      attempt < MAX_TOKEN_RETRIES &&
+      (response.status === 429 || response.status >= 500)
+    ) {
+      const retryAfter = response.headers.get("retry-after");
+      const delayMs = retryAfter
+        ? Math.min(Number(retryAfter) * 1000, 30_000)
+        : INITIAL_RETRY_DELAY_MS * 2 ** attempt;
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      lastError = new Error(
+        `${label} failed: ${response.status} ${bodyText}`,
+      );
+      continue;
+    }
+
+    throw new Error(`${label} failed: ${response.status} ${bodyText}`);
+  }
+
+  throw lastError ?? new Error(`${label} failed after retries`);
+}
+
 function makeTokenHeaders(): HeadersInit {
   return {
-    Accept: "application/json, text/plain, */*",
-    "Content-Type": "application/x-www-form-urlencoded",
-    "User-Agent": USER_AGENT,
+    "Content-Type": "application/json",
   };
 }
 
@@ -180,11 +226,11 @@ async function createLocalAuthorization(
       if (done) return;
       done = true;
       if (timer) clearTimeout(timer);
-      if (server.listening) {
-        server.close(() => complete(value));
-        return;
-      }
       complete(value);
+      if (server.listening) {
+        server.closeAllConnections();
+        server.close();
+      }
     };
 
     server.on("request", (req, res) => {
@@ -214,7 +260,10 @@ async function createLocalAuthorization(
         return;
       }
 
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        Connection: "close",
+      });
       res.end(makeCallbackPage());
       finish(url.toString());
     });
