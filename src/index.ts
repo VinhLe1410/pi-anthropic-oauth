@@ -1,7 +1,8 @@
 import { existsSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ProviderConfig } from "@mariozechner/pi-coding-agent";
+import type { OAuthCredentials } from "@mariozechner/pi-ai";
 import { loginAnthropic, refreshAnthropicToken } from "./auth.js";
 import { streamAnthropicOAuth } from "./stream.js";
 
@@ -54,10 +55,11 @@ export default function (pi: ExtensionAPI) {
     models: [...MODELS],
     oauth: {
       name: "Claude Pro/Max",
+      usesCallbackServer: true,
       login: loginAnthropic,
       refreshToken: refreshAnthropicToken,
-      getApiKey: (credentials) => credentials.access,
-    },
+      getApiKey: (credentials: OAuthCredentials) => credentials.access,
+    } as unknown as ProviderConfig["oauth"],
     streamSimple: streamAnthropicOAuth,
   });
 }

@@ -17,6 +17,8 @@ const SCOPES = [
   "user:file_upload",
 ].join(" ");
 const USER_AGENT = "claude-code/2.1.97";
+const CALLBACK_PORT = 53692;
+const CALLBACK_HOST = "127.0.0.1";
 const LOCAL_CALLBACK_TIMEOUT = 5 * 60 * 1000;
 const MAX_TOKEN_RETRIES = 2;
 const INITIAL_RETRY_DELAY_MS = 5000;
@@ -27,6 +29,7 @@ type ParsedAuthInput = { code: string; state: string };
 type LocalAuthorization = {
   redirectUri: string;
   waitForCallback: () => Promise<string | null>;
+  cancel: () => void;
 };
 
 export function isClaudeOAuthAccessToken(apiKey: string): boolean {
@@ -49,12 +52,43 @@ export async function loginAnthropic(
     callbacks.onAuth({
       url: makeAuthorizeUrl(challenge, state, redirectUri),
       instructions:
-        "Complete authorization in the browser. Pi will try to capture the callback automatically.",
+        "Complete login in your browser. If the browser is on another machine, paste the final redirect URL here.",
     });
 
-    authInput = await localAuthorization.waitForCallback();
+    if (callbacks.onManualCodeInput) {
+      let manualInput: string | undefined;
+      let manualError: Error | undefined;
+      const manualPromise = callbacks
+        .onManualCodeInput()
+        .then((input) => {
+          manualInput = input;
+          localAuthorization.cancel();
+        })
+        .catch((err) => {
+          manualError =
+            err instanceof Error ? err : new Error(String(err));
+          localAuthorization.cancel();
+        });
+
+      const callbackResult = await localAuthorization.waitForCallback();
+
+      if (manualError) throw manualError;
+
+      if (callbackResult) {
+        authInput = callbackResult;
+      } else if (manualInput) {
+        authInput = manualInput;
+      }
+
+      if (!authInput) {
+        await manualPromise;
+        if (manualError) throw manualError;
+        if (manualInput) authInput = manualInput;
+      }
+    } else {
+      authInput = await localAuthorization.waitForCallback();
+    }
   } catch {
-    // Fall back to manual code entry when localhost callback setup fails.
   }
 
   if (!authInput) {
@@ -270,17 +304,12 @@ async function createLocalAuthorization(
 
     server.once("error", reject);
 
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("Failed to allocate localhost callback port"));
-        return;
-      }
-
+    server.listen(CALLBACK_PORT, CALLBACK_HOST, () => {
       timer = setTimeout(() => finish(null), LOCAL_CALLBACK_TIMEOUT);
       resolve({
-        redirectUri: `http://localhost:${address.port}/callback`,
+        redirectUri: `http://localhost:${CALLBACK_PORT}/callback`,
         waitForCallback: () => wait,
+        cancel: () => finish(null),
       });
     });
   });
