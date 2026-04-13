@@ -13,7 +13,7 @@ const MODELS = [
     reasoning: true,
     input: ["text", "image"] as ("text" | "image")[],
     cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
-    contextWindow: 1000000,
+    contextWindow: 200000,
     maxTokens: 128000,
   },
   {
@@ -22,7 +22,7 @@ const MODELS = [
     reasoning: true,
     input: ["text", "image"] as ("text" | "image")[],
     cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-    contextWindow: 1000000,
+    contextWindow: 200000,
     maxTokens: 64000,
   },
   {
